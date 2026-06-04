@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+<body>
+<!-- No visible UI — silent background injector -->
+<script>
+Office.onReady(() => {
+  Office.context.mailbox.item.body.getAsync(
+    Office.CoercionType.Html,
+    function(result) {
+      if (result.status !== Office.AsyncResultStatus.Succeeded) return;
+
+      const styleBlock = `<style>
+        .lg-wrap {
+          display: inline;
+          position: relative;
+        }
+        .lg-tip {
+          display: none;
+          position: absolute;
+          bottom: calc(100% + 8px);
+          left: 0;
+          background: #991b1b;
+          color: #ffffff;
+          font-size: 12px;
+          font-weight: 700;
+          font-family: 'Segoe UI', sans-serif;
+          padding: 6px 12px;
+          border-radius: 6px;
+          white-space: nowrap;
+          z-index: 99999;
+          pointer-events: none;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+          line-height: 1.4;
+        }
+        .lg-tip::after {
+          content: '';
+          position: absolute;
+          top: 100%;
+          left: 12px;
+          border: 5px solid transparent;
+          border-top-color: #991b1b;
+        }
+        .lg-wrap:hover .lg-tip,
+        .lg-wrap:focus-within .lg-tip {
+          display: block;
+        }
+        .lg-wrap a:focus {
+          outline: 2px solid #dc2626;
+          outline-offset: 2px;
+          border-radius: 2px;
+        }
+      </style>`;
+
+      // Wrap every anchor with hover + focus-within container
+      let html = result.value;
+
+      html = html.includes('</head>')
+        ? html.replace('</head>', styleBlock + '</head>')
+        : styleBlock + html;
+
+      // Wrap <a href="...">...</a> with lg-wrap span
+      html = html.replace(
+        /(<a\s[^>]*href=["']https?:\/\/[^"']*["'][^>]*>)([\s\S]*?)(<\/a>)/gi,
+        '<span class="lg-wrap">$1$2$3<span class="lg-tip">⚠️ Do NOT click — verify with IT first!</span></span>'
+      );
+
+      Office.context.mailbox.item.body.setAsync(
+        html,
+        { coercionType: Office.CoercionType.Html }
+      );
+    }
+  );
+});
+</script>
+</body>
+</html>
