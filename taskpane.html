@@ -91,7 +91,7 @@
   </div>
 </div>
 
-<div class="summary none" id="summary">⏳ Scanning email for links…</div>
+<div class="summary none" id="summary">⏳ Scanning…</div>
 <div class="link-list" id="link-list"></div>
 <div class="footer">Check every link above before clicking anything in the email.</div>
 
@@ -102,9 +102,9 @@ function analyzeUrl(url) {
   try {
     const u = new URL(url);
     const h = u.hostname.toLowerCase();
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h))                          { reasons.push('IP address instead of domain'); score += 3; }
-    if (['bit.ly','tinyurl.com','t.co','ow.ly','rb.gy'].some(s => h === s)) { reasons.push('URL shortener — hides real destination'); score += 2; }
-    if (u.protocol !== 'https:')                                      { reasons.push('Not HTTPS — unencrypted'); score += 2; }
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h))                               { reasons.push('IP address instead of domain'); score += 3; }
+    if (['bit.ly','tinyurl.com','t.co','ow.ly','rb.gy'].some(s => h===s)) { reasons.push('URL shortener — hides real destination'); score += 2; }
+    if (u.protocol !== 'https:')                                           { reasons.push('Not HTTPS — unencrypted'); score += 2; }
     if (['.xyz','.tk','.ml','.ga','.cf','.top'].some(t => h.endsWith(t))) { reasons.push('High-risk domain extension'); score += 2; }
     const kw = ['login','verify','paypal','password','signin','confirm','account','update','bank','secure'];
     const found = kw.find(k => h.includes(k) || u.pathname.includes(k));
@@ -119,73 +119,86 @@ function analyzeUrl(url) {
 function riskIcon(r)  { return { danger:'🔴', warn:'🟡', safe:'🟢' }[r]; }
 function riskLabel(r) { return { danger:'HIGH RISK — Do not click!', warn:'Suspicious — be careful', safe:'Appears safe' }[r]; }
 
+var currentItemId = null;
+
 function scanEmail() {
-  const summaryEl = document.getElementById('summary');
-  const listEl    = document.getElementById('link-list');
+  var item = Office.context.mailbox.item;
+  if (!item) return;
+
+  // Check if email has changed using subject + dateTimeCreated as unique key
+  var itemKey = item.subject + '_' + (item.dateTimeCreated ? item.dateTimeCreated.toString() : '');
+
+  if (itemKey === currentItemId) return; // same email, skip
+  currentItemId = itemKey;
+
+  var summaryEl = document.getElementById('summary');
+  var listEl    = document.getElementById('link-list');
 
   summaryEl.className = 'summary none';
   summaryEl.textContent = '⏳ Scanning…';
   listEl.innerHTML = '';
 
-  Office.context.mailbox.item.body.getAsync(
-    Office.CoercionType.Html,
-    function(result) {
-      if (result.status !== Office.AsyncResultStatus.Succeeded) {
-        summaryEl.textContent = '❌ Could not read email.';
-        return;
-      }
-
-      const parser  = new DOMParser();
-      const doc     = parser.parseFromString(result.value, 'text/html');
-      const urls    = [...new Set(
-        Array.from(doc.querySelectorAll('a[href^="http"]')).map(a => a.href)
-      )];
-
-      if (urls.length === 0) {
-        summaryEl.className = 'summary none';
-        summaryEl.textContent = '✅ No links in this email.';
-        return;
-      }
-
-      const results = urls.map(url => ({ url, ...analyzeUrl(url) }));
-      const dangers = results.filter(r => r.risk === 'danger').length;
-      const warns   = results.filter(r => r.risk === 'warn').length;
-
-      if (dangers > 0) {
-        summaryEl.className = 'summary danger';
-        summaryEl.textContent = '🚨 ' + dangers + ' HIGH RISK link' + (dangers > 1 ? 's' : '') + ' — do NOT click!';
-      } else if (warns > 0) {
-        summaryEl.className = 'summary warn';
-        summaryEl.textContent = '⚠️ ' + warns + ' suspicious link' + (warns > 1 ? 's' : '') + ' — be careful';
-      } else {
-        summaryEl.className = 'summary safe';
-        summaryEl.textContent = '✅ ' + urls.length + ' link' + (urls.length > 1 ? 's' : '') + ' scanned — all appear safe';
-      }
-
-      results.forEach(function(r) {
-        const card = document.createElement('div');
-        card.className = 'link-card ' + r.risk;
-        card.innerHTML =
-          '<div class="risk-label">' + riskIcon(r.risk) + ' ' + riskLabel(r.risk) + '</div>' +
-          '<div class="url">' + r.url + '</div>' +
-          '<div class="reason">' + r.reasons.join(' · ') + '</div>';
-        listEl.appendChild(card);
-      });
+  item.body.getAsync(Office.CoercionType.Html, function(result) {
+    if (result.status !== Office.AsyncResultStatus.Succeeded) {
+      summaryEl.textContent = '❌ Could not read email.';
+      return;
     }
-  );
+
+    var parser = new DOMParser();
+    var doc    = parser.parseFromString(result.value, 'text/html');
+    var urls   = [];
+    var seen   = {};
+    doc.querySelectorAll('a[href^="http"]').forEach(function(a) {
+      if (!seen[a.href]) { seen[a.href] = true; urls.push(a.href); }
+    });
+
+    if (urls.length === 0) {
+      summaryEl.className = 'summary none';
+      summaryEl.textContent = '✅ No links in this email.';
+      return;
+    }
+
+    var results = urls.map(function(url) { return Object.assign({ url: url }, analyzeUrl(url)); });
+    var dangers = results.filter(function(r) { return r.risk === 'danger'; }).length;
+    var warns   = results.filter(function(r) { return r.risk === 'warn'; }).length;
+
+    if (dangers > 0) {
+      summaryEl.className = 'summary danger';
+      summaryEl.textContent = '🚨 ' + dangers + ' HIGH RISK link' + (dangers > 1 ? 's' : '') + ' — do NOT click!';
+    } else if (warns > 0) {
+      summaryEl.className = 'summary warn';
+      summaryEl.textContent = '⚠️ ' + warns + ' suspicious link' + (warns > 1 ? 's' : '') + ' — be careful';
+    } else {
+      summaryEl.className = 'summary safe';
+      summaryEl.textContent = '✅ ' + urls.length + ' link' + (urls.length > 1 ? 's' : '') + ' scanned — all appear safe';
+    }
+
+    results.forEach(function(r) {
+      var card = document.createElement('div');
+      card.className = 'link-card ' + r.risk;
+      card.innerHTML =
+        '<div class="risk-label">' + riskIcon(r.risk) + ' ' + riskLabel(r.risk) + '</div>' +
+        '<div class="url">' + r.url + '</div>' +
+        '<div class="reason">' + r.reasons.join(' · ') + '</div>';
+      listEl.appendChild(card);
+    });
+  });
 }
 
 Office.onReady(function() {
-  // Scan the current email immediately
+  // Scan immediately on load
   scanEmail();
 
-  // Re-scan automatically whenever user selects a different email
-  if (Office.context.mailbox.addHandlerAsync) {
+  // Try ItemChanged event (works on business accounts)
+  try {
     Office.context.mailbox.addHandlerAsync(
       Office.EventType.ItemChanged,
-      function() { scanEmail(); }
+      function() { currentItemId = null; scanEmail(); }
     );
-  }
+  } catch(e) {}
+
+  // Fallback polling every 1.5 seconds for personal accounts
+  setInterval(scanEmail, 1500);
 });
 </script>
 </body>
