@@ -6,99 +6,164 @@
 </head>
 <body style="margin:0;padding:6px 12px;font-family:'Segoe UI',sans-serif;font-size:12px;background:#fff3f3;border-top:3px solid #dc2626;">
 <div id="msg" style="color:#991b1b;font-weight:700;">🛡️ LinkGuard — loading...</div>
-<div id="log" style="color:#555;font-size:11px;margin-top:4px;"></div>
+<div id="log" style="color:#555;font-size:11px;margin-top:2px;"></div>
 
 <script>
 function log(msg) {
   document.getElementById('log').innerHTML += msg + '<br/>';
 }
 
-log('Script started');
+function injectIntoParent() {
+  try {
+    // Outlook Web renders the email in the same DOM — walk up to top window
+    const topDoc = window.top.document;
 
-Office.onReady(function(info) {
-  log('Office.onReady fired — host: ' + info.host + ', platform: ' + info.platform);
-
-  if (!Office.context.mailbox) {
-    log('ERROR: mailbox not available');
-    document.getElementById('msg').textContent = '🛡️ LinkGuard — mailbox unavailable';
-    return;
-  }
-
-  log('Mailbox OK — getting email body...');
-  document.getElementById('msg').textContent = '🛡️ LinkGuard — scanning...';
-
-  Office.context.mailbox.item.body.getAsync(
-    Office.CoercionType.Html,
-    function(result) {
-      if (result.status !== Office.AsyncResultStatus.Succeeded) {
-        log('ERROR getting body: ' + result.error.message);
-        document.getElementById('msg').textContent = '🛡️ LinkGuard — failed to read email';
-        return;
-      }
-
-      log('Got email body — length: ' + result.value.length);
-
-      const matches = result.value.match(/<a\s[^>]*href=["']https?:\/\/[^"']*["'][^>]*>[\s\S]*?<\/a>/gi);
-      const count = matches ? matches.length : 0;
-      log('Links found: ' + count);
-
-      if (count === 0) {
-        document.getElementById('msg').textContent = '🛡️ LinkGuard — no links in this email';
-        return;
-      }
-
-      const styleBlock = `<style>
-        .lg-wrap { display:inline; position:relative; }
+    // Inject styles into the top document
+    if (!topDoc.getElementById('lg-styles')) {
+      const style = topDoc.createElement('style');
+      style.id = 'lg-styles';
+      style.textContent = `
+        .lg-wrap {
+          display: inline !important;
+          position: relative !important;
+        }
         .lg-tip {
-          display:none; position:absolute;
-          bottom:calc(100% + 8px); left:0;
-          background:#991b1b; color:#fff;
-          font-size:12px; font-weight:700;
-          font-family:'Segoe UI',sans-serif;
-          padding:6px 12px; border-radius:6px;
-          white-space:nowrap; z-index:99999;
-          pointer-events:none;
-          box-shadow:0 4px 14px rgba(0,0,0,0.25);
+          display: none !important;
+          position: absolute !important;
+          bottom: calc(100% + 8px) !important;
+          left: 0 !important;
+          background: #991b1b !important;
+          color: #fff !important;
+          font-size: 12px !important;
+          font-weight: 700 !important;
+          font-family: 'Segoe UI', sans-serif !important;
+          padding: 6px 12px !important;
+          border-radius: 6px !important;
+          white-space: nowrap !important;
+          z-index: 999999 !important;
+          pointer-events: none !important;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.3) !important;
+          line-height: 1.4 !important;
         }
         .lg-tip::after {
-          content:''; position:absolute;
-          top:100%; left:12px;
-          border:5px solid transparent;
-          border-top-color:#991b1b;
+          content: '' !important;
+          position: absolute !important;
+          top: 100% !important;
+          left: 12px !important;
+          border: 5px solid transparent !important;
+          border-top-color: #991b1b !important;
         }
         .lg-wrap:hover .lg-tip,
-        .lg-wrap:focus-within .lg-tip { display:block; }
-        .lg-wrap a:focus { outline:2px solid #dc2626; outline-offset:2px; border-radius:2px; }
-      </style>`;
-
-      let html = result.value;
-      html = html.includes('</head>')
-        ? html.replace('</head>', styleBlock + '</head>')
-        : styleBlock + html;
-
-      html = html.replace(
-        /(<a\s[^>]*href=["']https?:\/\/[^"']*["'][^>]*>)([\s\S]*?)(<\/a>)/gi,
-        '<span class="lg-wrap">$1$2$3<span class="lg-tip">⚠️ Do NOT click — verify with IT first!</span></span>'
-      );
-
-      log('Injecting into email body...');
-
-      Office.context.mailbox.item.body.setAsync(
-        html,
-        { coercionType: Office.CoercionType.Html },
-        function(setResult) {
-          if (setResult.status === Office.AsyncResultStatus.Succeeded) {
-            log('Injection successful!');
-            document.getElementById('msg').textContent =
-              '🛡️ LinkGuard — ⚠️ ' + count + ' link' + (count > 1 ? 's' : '') + ' protected. Hover before clicking!';
-          } else {
-            log('ERROR setting body: ' + setResult.error.message);
-            document.getElementById('msg').textContent = '🛡️ LinkGuard — injection failed';
-          }
+        .lg-wrap:focus-within .lg-tip {
+          display: block !important;
         }
-      );
+        .lg-wrap a:focus {
+          outline: 2px solid #dc2626 !important;
+          outline-offset: 2px !important;
+          border-radius: 2px !important;
+        }
+      `;
+      topDoc.head.appendChild(style);
+      log('Styles injected into top document');
     }
-  );
+
+    // Find all links in the top document email body
+    const links = topDoc.querySelectorAll('a[href^="http"]');
+    let count = 0;
+
+    links.forEach(function(anchor) {
+      if (anchor.closest('.lg-wrap')) return; // already wrapped
+      const wrapper = topDoc.createElement('span');
+      wrapper.className = 'lg-wrap';
+      const tip = topDoc.createElement('span');
+      tip.className = 'lg-tip';
+      tip.textContent = '⚠️ Do NOT click — verify with IT first!';
+      anchor.parentNode.insertBefore(wrapper, anchor);
+      wrapper.appendChild(anchor);
+      wrapper.appendChild(tip);
+      count++;
+    });
+
+    log('Wrapped ' + count + ' links in top document');
+
+    if (count > 0) {
+      document.getElementById('msg').textContent =
+        '🛡️ LinkGuard — ⚠️ ' + count + ' link' + (count > 1 ? 's' : '') + ' protected!';
+    } else {
+      document.getElementById('msg').textContent = '🛡️ LinkGuard — no links found';
+    }
+
+    // Watch for new emails being opened
+    const observer = new MutationObserver(function() {
+      clearTimeout(window._lgTimer);
+      window._lgTimer = setTimeout(injectIntoParent, 600);
+    });
+    observer.observe(topDoc.body, { childList: true, subtree: true });
+
+  } catch(e) {
+    log('top document access failed: ' + e.message);
+    // Fallback: try parent document
+    tryParent();
+  }
+}
+
+function tryParent() {
+  try {
+    const parentDoc = window.parent.document;
+    if (!parentDoc.getElementById('lg-styles')) {
+      const style = parentDoc.createElement('style');
+      style.id = 'lg-styles';
+      style.textContent = `
+        .lg-wrap { display:inline !important; position:relative !important; }
+        .lg-tip {
+          display:none !important; position:absolute !important;
+          bottom:calc(100% + 8px) !important; left:0 !important;
+          background:#991b1b !important; color:#fff !important;
+          font-size:12px !important; font-weight:700 !important;
+          font-family:'Segoe UI',sans-serif !important;
+          padding:6px 12px !important; border-radius:6px !important;
+          white-space:nowrap !important; z-index:999999 !important;
+          pointer-events:none !important;
+        }
+        .lg-tip::after {
+          content:'' !important; position:absolute !important;
+          top:100% !important; left:12px !important;
+          border:5px solid transparent !important;
+          border-top-color:#991b1b !important;
+        }
+        .lg-wrap:hover .lg-tip,
+        .lg-wrap:focus-within .lg-tip { display:block !important; }
+      `;
+      parentDoc.head.appendChild(style);
+    }
+    const links = parentDoc.querySelectorAll('a[href^="http"]');
+    let count = 0;
+    links.forEach(function(anchor) {
+      if (anchor.closest('.lg-wrap')) return;
+      const wrapper = parentDoc.createElement('span');
+      wrapper.className = 'lg-wrap';
+      const tip = parentDoc.createElement('span');
+      tip.className = 'lg-tip';
+      tip.textContent = '⚠️ Do NOT click — verify with IT first!';
+      anchor.parentNode.insertBefore(wrapper, anchor);
+      wrapper.appendChild(anchor);
+      wrapper.appendChild(tip);
+      count++;
+    });
+    log('parent fallback: wrapped ' + count + ' links');
+    if (count > 0) {
+      document.getElementById('msg').textContent =
+        '🛡️ LinkGuard — ⚠️ ' + count + ' link' + (count > 1 ? 's' : '') + ' protected!';
+    }
+  } catch(e2) {
+    log('parent also failed: ' + e2.message);
+    document.getElementById('msg').textContent = '🛡️ LinkGuard — hover injection not supported in this Outlook version';
+  }
+}
+
+Office.onReady(function(info) {
+  log('Office ready — ' + info.host + ' / ' + info.platform);
+  setTimeout(injectIntoParent, 800);
 });
 </script>
 </body>
